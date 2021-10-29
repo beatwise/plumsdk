@@ -1,0 +1,454 @@
+
+//          Copyright Alessandro De Santis 2021.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+
+
+PLUM v1.0																
+-------------------------------------------------------------------------------------------
+plum specifies a C++ (audio) PLUgin Model. It uses a set of pure C++ abstract classes 
+to export objects.
+
+
+
+STRING ENCODING
+--------------------------------------------------------------------------------------------
+
+plum strings are UTF-8 encoded.
+
+
+
+THE SHARED LIBRARY
+--------------------------------------------------------------------------------------------
+Plugins are compiled into shared libraries. A library may contain one or more
+plugins. The library must export the following functions:
+
+
+	plum_begin()
+
+Optional. It's the first function called by the host after loading the library.
+
+
+	plum_end()
+
+Optional. It's the last function called by the host. Called before unloading the library.
+
+
+	plum_get_version()
+
+Returns the plum version which the library complies with.
+
+
+	plum_catalog()
+
+Enumerates the plugins by index.
+
+The are two types of plugin: PLUM_SYNTH and PLUM_EFFECT. The two types of plugin
+have no structural difference. Their category is only used with the catalog.
+
+You ask plugin names starting with index 0 and increment this index. When the returned 
+name is nullptr the enumeration is over. Since synths and effects are in two different
+categories both their enumerations start with index 0.
+
+Though in different categories, synths and effects may not have the same name. Plugin 
+names are matched case sensitive, but different plugin names that match case insensitive 
+are NOT allowed.
+
+The name returned by the catalog must match the name that the plugin itself returns by
+plum::iplugin::get_name().
+
+
+	plum_plugin_info()
+
+Gets a plugin description given its name. It returns nullptr if the name doesn't match any
+plugin in the catalog.
+
+	plum_create_plugin()
+
+Returns the plugin or nullptr if a plugin with that name is not found. It creates a plugin 
+given its name and a pointer to the plum::ihost interface. The pointer must NOT be nullptr. 
+
+
+
+
+THE AUDIO PLUGIN
+--------------------------------------------------------------------------------------------
+
+The audio plugin implements plum::iplugin.
+
+IO
+--
+
+	plum::iplugin::count_inputs()
+	plum::iplugin::count_outputs()
+
+These methods return the number of input/output channels.
+
+	plum::iplugin::get_input_name()
+	plum::iplugin::get_output_name()
+
+These methods, given a channel index, return its name as a plum::istring. The caller 
+must release this string.
+
+The default audio input and output, if any, must always be stereo and occupy the first
+two indices: 0, 1.
+
+
+PROCESSING
+----------
+
+The following methods must be called from the audio thread:
+
+	1) plum::iplugin::midi_event()
+
+Notifies the plugin of a single midi event. 
+
+	2) plum::iplugin::process()
+
+Reads data from the list of input channels and fills the buffers in the list of output 
+channels.
+
+1) must always be called before 2). 1) must be called repeatedly for each simultaneous event.
+Events must be sorted and are always relative to the begin of the buffer.
+
+The following methods must NOT be called from the audio thread:
+
+
+	plum::iplugin::configure()
+
+Informs the plugin of the max buffer size and sample rate.
+
+
+	plum::iplugin::activate()
+
+Warns the plugin that it's about to enter the audio loop: 1) and 2) are about to be called
+repeatedly.
+
+
+	plum::iplugin::deactivate()
+
+Warns the plugin that it has left the audio loop: 1) and 2) won't be called anymore.
+
+
+PRESETS
+-------
+
+	plum::iplugin::count_presets()
+
+Returns the number of presets that the plugin bank contains.
+
+
+	plum::iplugin::get_selected_preset()
+
+Returns the index of the active preset.
+
+
+	plum::iplugin::set_selected_preset()
+
+Sets the active preset by index. The plugin must notify the host that the selected preset
+has changed, see plum::ihost.
+
+
+	plum::iplugin::get_preset_name()
+
+Returns a preset name by index as a plum::istring. The caller must release the string.
+
+
+	plum::iplugin::set_preset_name()
+
+Sets the name of the preset by index as a plum::string. The callee must release the string.
+
+
+A plugin that saves and loads presets must implement the plum::istorage interface.
+The plugin file format is up to the plugin and the plugin must validate the data it receives.
+The host loads and saves data as is. Suggested file extensions are: 
+
+	*.plum.preset
+	*.plum.bank
+
+
+	plum::istorage::set_preset_data()
+
+Overwrites the selected preset with data from the plum::iblog. The callee must release 
+the blob. The callee must return false on invalid data. On valid data the plugin must notify
+the host that the preset has changed.
+
+
+	plum::istorage::get_preset_data()
+
+The plugin returns the selected preset data as a plum::iblob. The caller must release the blob.
+
+
+	plum::istorage::set_bank_data()
+
+Overwrites the entire bank with data from the plum::iblog. The callee must release 
+the blob. The callee must return false on invalid data. On valid data the plugin must notify
+the host that the bank has changed.
+
+
+	plum::istorage::get_bank_data()
+
+The plugin returns the bank data as a plum::iblob. The caller must release the blob.
+
+
+
+
+PARAMETERS
+----------
+
+Parameters are defined using the struct plum_param_def. A parameter is defined by:
+
+	1) its type: PLUM_FLOAT or PLUM_INTEGER. 
+	2) its range.
+	3) its name.
+	4) a formatting function which, given a parameter value, fills a buffer containing its 
+	   displayable string.
+
+
+	plum::iplugin::count_parameters()
+
+Returns the number of parameters.
+
+
+	plum::iplugin::get_parameter()
+
+Returns the value of a parameter by index.
+
+
+	plum::iplugin::set_parameter()
+
+Sets the value of a parameter by index.
+
+
+	plum::iplugin::get_parameter_def()
+
+Returns a parameter's plum_param_def by index.
+
+
+
+
+THE HOST
+--------------------------------------------------------------------------------------------
+
+The host implements plum::ihost. 
+
+The following methods are notifications and must be sent by a plugin:
+
+
+	plum::ihost::plugin_preset_selected()
+
+Called in response to plum::iplugin::set_selected_preset.
+
+
+	plum::ihost::plugin_bank_changed()
+
+Called in response to plum::iplugin::set_bank_data
+
+
+	plum::ihost::plugin_preset_changed()
+
+Called in response to plum::iplugin::set_preset_data
+
+
+A plugin calls the following methods to ask the host to perform the corresponding actions:
+
+	plum::ihost::plugin_load_preset()
+	plum::ihost::plugin_save_preset()
+	plum::ihost::plugin_load_bank()
+	plum::ihost::plugin_save_bank()
+
+
+THE GUI
+--------------------------------------------------------------------------------------------
+
+The plugin gui is divided into two parts:
+
+1) The physical window which is provided by the host through plum::ihostwindow.
+2) The virtual window which is created by the plugin implementing a plum::iwindow.
+
+When the host wants to open the plugin gui:
+
+1) it creates a plum::ihostwindow.
+2) calls plum::iplugin::open_ui passing a pointer to plum::ihostwindow. The pointer must
+   valid. open_ui creates a plum::iwindow and returns it to the caller.
+
+When the host wants to close the plugin gui: 
+
+1) it calls plum::iwindow::close.
+2) and releases the window.
+
+The gui plum::iwindow::close() method must inform the plugin that it's about to be closed, 
+so that the plugin can release its reference to the window (letting the object be destroyed).
+
+While its gui is open, a plugin will respond to further open_ui calls by returning nullptr.
+
+
+As a plum::ihostwindow, the host provides the following methods
+
+	plum::ihostwindow::get_size()
+
+Returns the size of the window. The plugin MUST be able handle sizes larger than the one
+it requested.
+
+
+	plum::ihostwindow::on_plugin_preferred_size()
+
+The plugin gui calls this to request a new size. The host must never assign a size smaller
+than this.
+
+
+	plum::ihostwindow::on_plugin_repaint()
+
+The plugin gui calls this to request a redraw.
+
+
+	plum::ihostwindow::get_clipboard_text()
+
+The plugin gui calls this to get the clipboard text. The host will send the text calling
+plum::iwindow::on_paste_text.
+
+
+	plum::ihostwindow::set_clipboard_text()
+
+The plugin gui calls this to set the clipboard text.
+
+
+	plum::ihostwindow::add_timer()
+
+The plugin gui calls this to start a timer. The id parameter identifies the timer during the
+callback. The callback is plum::iwindow::on_timer.
+
+
+	plum::ihostwindow::remove_timer()
+
+The plugin gui calls this to stop the timer identified by id.
+
+
+The plugin iwindow receives window events by the host through the following methods:
+
+
+	plum::iwindow::close()
+
+The window is about to be closed.
+
+
+	plum::iwindow::get_preferred_size()
+
+The host asks for the window size.
+
+
+	plum::iwindow::render()
+
+The window content needs to be rendered. The iwindow receives a graphic buffer pointer whose
+pixel format is argb32.
+
+
+	plum::iwindow::on_size()
+
+The hostwindow has changed its size. The window may be larger than expected. Never smaller.
+
+
+	plum::iwindow::on_mouse_in()
+
+The mouse entered the window.
+
+
+	plum::iwindow::on_mouse_out()
+
+The mouse left the window.
+
+
+	plum::iwindow::on_mouse_move()
+
+Mouse motion event.
+
+
+	plum::iwindow::on_mouse_down()
+
+Mouse pressed event.
+
+
+	plum::iwindow::on_mouse_up()
+
+Mouse released event.
+
+
+	plum::iwindow::on_utf8_char()
+
+A key press is decoded.
+
+
+	plum::iwindow::on_key_down()
+
+A key is pressed.
+
+
+	plum::iwindow::on_key_up()
+
+A key is released.
+
+
+	plum::iwindow::on_paste_text()
+
+Some text was pasted. Also in response to get_clipboard_text().
+
+
+	plum::iwindow::on_timer()
+
+Timer tick event.
+
+
+
+
+
+THE OBJECT MODEL
+--------------------------------------------------------------------------------------------
+
+Plum objects derive from plum::iobject.
+
+plum::iobject requires a reference count to regulate the lifetime of the object. The object
+is created with the count set to 1.
+
+	plum::iobject::reference()
+
+Increases the count.
+
+
+	plum::iobject::release()
+
+Decreases the count. When the count reaches zero the object is destroyed.
+
+
+	plum::iobject::as()
+
+Requests an interface. It returns nullptr if the interface is not implemented. The inteface
+is returned with its count already incremented.
+
+Interface ids are strings that represent a (dot separated) namespace. Each name is restricted 
+to [0-9a-z].
+
+Some predefinded plum IDs are:
+
+#define IFID_PLUM_OBJECT 			"plum.object"
+#define IFID_PLUM_STRING 			"plum.string"
+#define IFID_PLUM_BLOB	 			"plum.blob"
+#define IFID_PLUM_WINDOW			"plum.window"
+#define IFID_PLUM_HOSTWINDOW 		"plum.hostwindow"
+
+The host (ihost and ihostwindow) is not required to adhere to the reference count system, but 
+the plugin must always set the reference counts of the host objects it receives as required.
+
+plum::istring and plum::iblob are used to pass string and binary data around. The entity
+that receives these objects must release them when they are not needed anymore.
+
+	plum::istring::text()
+
+Returns the text contained in the string object.
+
+	plum::iblob::size()
+	plum::iblob::data()
+
+Returns the size and a pointer to the data stored in the blob.
+
+
